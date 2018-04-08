@@ -1,0 +1,10 @@
+build/
+dist/
+run/
+.idea/
+*.pyc
+*$py.class
+*~
+.*.sw[pon]
+
+motion_uploader.ini
