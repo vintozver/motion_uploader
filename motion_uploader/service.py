@@ -13,6 +13,7 @@ import http.client as http_client
 import urllib.parse as url_parser
 import json
 import re
+import time
 from .config import Config
 from .logging_defaults import *
 
@@ -25,6 +26,7 @@ class Service(object):
     def __init__(self):
         self.root_path = os.getcwd()
         self.cf = Config()
+        self.camera_id = self.cf.get_camera_id()
         self.re_file = re.compile('^(.*)\.jpg$', re.UNICODE | re.IGNORECASE)
         self.access_token_type = None
         self.access_token = None
@@ -103,9 +105,38 @@ class Service(object):
         del potential_files
 
         for processing_file in processing_files:
-            pass
+            if self.upload_file(processing_file):
+                try:
+                    os.unlink(os.path.join(self.root_path, processing_file))
+                except OSError:
+                    pass
+            else:
+                time.sleep(30)  # error cool down period
 
         return more_files
+
+    def upload_file(self, file_name):
+        http_conn = http_client.HTTPSConnection('graph.microsoft.com')
+        http_conn.request(
+            'PUT', '/v1.0/me/drive/root:/motion_uploader/%s/%s:/content' % (self.camera_id, file_name),
+            open(os.path.join(self.root_path, file_name), 'rb').readall(),
+            {
+                'Authorization': '%s %s' % (self.access_token_type, self.access_token),
+                'Content-Type': 'image/jpeg',
+            }
+        )
+        http_resp = http_conn.getresponse()
+        if http_resp.status == http.HTTPStatus.CREATED.value:
+            driveitem_obj = json.loads(http_resp.read().decode('utf-8'))
+            logging.info('Uploaded file: %s' % driveitem_obj)
+            return True
+        else:
+            logging.error('Unexpected response: %s %s\n%s' % (
+                http_resp.status,
+                http_resp.reason,
+                http_resp.read().decode('utf-8', errors='replace')
+            ))
+            return False
 
 
 def main():
