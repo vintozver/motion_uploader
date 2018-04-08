@@ -134,7 +134,7 @@ class Service(object):
             }
         )
         http_resp = http_conn.getresponse()
-        if http_resp.status == http.HTTPStatus.CREATED.value:
+        if http_resp.status == http.HTTPStatus.CREATED.value or http_resp.status == http.HTTPStatus.OK.value:
             driveitem_obj = json.loads(http_resp.read().decode('utf-8'))
             logging.info('Uploaded file: %s' % driveitem_obj)
             return True
