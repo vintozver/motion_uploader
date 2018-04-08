@@ -24,6 +24,8 @@ class FetchAccessTokenError(Exception):
 
 class Service(object):
     def __init__(self):
+        self.shutdown_event = Event()
+
         self.root_path = os.getcwd()
         self.cf = Config()
         self.camera_id = self.cf.get_camera_id()
@@ -31,6 +33,9 @@ class Service(object):
         self.access_token_type = None
         self.access_token = None
         self.access_token_expires = None
+
+    def shutdown(self):
+        self.shutdown_event.set()
 
     def fetch_access_token(self) -> bool:
         # Convert the refresh_token to the access_token
@@ -105,9 +110,9 @@ class Service(object):
         del potential_files
 
         for processing_file in processing_files:
-            if self.upload_file(processing_file):
+            if self.upload_file(processing_file[0]):
                 try:
-                    os.unlink(os.path.join(self.root_path, processing_file))
+                    os.unlink(os.path.join(self.root_path, processing_file[0]))
                 except OSError:
                     pass
             else:
@@ -116,10 +121,13 @@ class Service(object):
         return more_files
 
     def upload_file(self, file_name):
+        if self.shutdown_event.is_set():
+            raise InterruptedError('Service is shutting down')
+
         http_conn = http_client.HTTPSConnection('graph.microsoft.com')
         http_conn.request(
             'PUT', '/v1.0/me/drive/root:/motion_uploader/%s/%s:/content' % (self.camera_id, file_name),
-            open(os.path.join(self.root_path, file_name), 'rb').readall(),
+            open(os.path.join(self.root_path, file_name), 'rb').read(),
             {
                 'Authorization': '%s %s' % (self.access_token_type, self.access_token),
                 'Content-Type': 'image/jpeg',
@@ -155,7 +163,7 @@ class Service(object):
             }),
             {
                 'Authorization': '%s %s' % (self.access_token_type, self.access_token),
-                'Content-Type': 'image/jpeg',
+                'Content-Type': 'application/json',
             }
         )
         http_resp = http_conn.getresponse()
@@ -182,7 +190,7 @@ class Service(object):
             }),
             {
                 'Authorization': '%s %s' % (self.access_token_type, self.access_token),
-                'Content-Type': 'image/jpeg',
+                'Content-Type': 'application/json',
             }
         )
         http_resp = http_conn.getresponse()
@@ -207,12 +215,14 @@ def main():
     logging.info('Running as a service')
 
     service = Service()
+    service.create_folders()
 
     termination_event = Event()
 
     def signal_handler(signum, frame):
         logging.warning('Received signal %s. Exiting' % signum)
         termination_event.set()
+        service.shutdown()
 
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
