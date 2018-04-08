@@ -138,6 +138,70 @@ class Service(object):
             ))
             return False
 
+    def create_folders(self):
+        if self.access_token is None or self.access_token_expires is None or \
+                self.access_token_expires <= datetime.datetime.utcnow():
+            self.fetch_access_token_retry()
+
+        http_conn = http_client.HTTPSConnection('graph.microsoft.com')
+
+        # create root dir
+        http_conn.request(
+            'POST', '/v1.0/me/drive/root/children',
+            json.dumps({
+                'name': 'motion_uploader',
+                'folder': {},
+                '@microsoft.graph.conflictBehavior': 'fail',
+            }),
+            {
+                'Authorization': '%s %s' % (self.access_token_type, self.access_token),
+                'Content-Type': 'image/jpeg',
+            }
+        )
+        http_resp = http_conn.getresponse()
+        if http_resp.status == http.HTTPStatus.CREATED.value:
+            driveitem_obj = json.loads(http_resp.read().decode('utf-8'))
+            logging.info('Created dir: %s' % driveitem_obj)
+        elif http_resp.status == http.HTTPStatus.CONFLICT.value:
+            logging.info('Conflict: %s' % http_resp.read().decode('utf-8', errors='replace'))
+        else:
+            logging.error('Unexpected response: %s %s\n%s' % (
+                http_resp.status,
+                http_resp.reason,
+                http_resp.read().decode('utf-8', errors='replace')
+            ))
+            return False
+
+        # create camera dir
+        http_conn.request(
+            'POST', '/v1.0/me/drive/root/motion_uploader/children',
+            json.dumps({
+                'name': self.camera_id,
+                'folder': {},
+                '@microsoft.graph.conflictBehavior': 'fail',
+            }),
+            {
+                'Authorization': '%s %s' % (self.access_token_type, self.access_token),
+                'Content-Type': 'image/jpeg',
+            }
+        )
+        http_resp = http_conn.getresponse()
+        if http_resp.status == http.HTTPStatus.CREATED.value:
+            driveitem_obj = json.loads(http_resp.read().decode('utf-8'))
+            logging.info('Created dir: %s' % driveitem_obj)
+        elif http_resp.status == http.HTTPStatus.CONFLICT.value:
+            logging.info('Conflict: %s' % http_resp.read().decode('utf-8', errors='replace'))
+        else:
+            logging.error('Unexpected response: %s %s\n%s' % (
+                http_resp.status,
+                http_resp.reason,
+                http_resp.read().decode('utf-8', errors='replace')
+            ))
+            return False
+
+        # all done
+        return True
+
 
 def main():
     logging.info('Running as a service')
