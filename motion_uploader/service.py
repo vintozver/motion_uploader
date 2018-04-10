@@ -14,6 +14,7 @@ import urllib.parse as url_parser
 import json
 import re
 import time
+import io
 from .config import Config
 from .logging_defaults import *
 
@@ -29,7 +30,7 @@ class Service(object):
         self.root_path = os.getcwd()
         self.cf = Config()
         self.camera_id = self.cf.get_camera_id()
-        self.re_file = re.compile('^(.*)\.jpg$', re.UNICODE | re.IGNORECASE)
+        self.re_file = re.compile('^(\\d{8})(.*\\.jpg)$', re.UNICODE | re.IGNORECASE)
         self.access_token_type = None
         self.access_token = None
         self.access_token_expires = None
@@ -85,7 +86,8 @@ class Service(object):
         dt = datetime.datetime.utcnow()
         dt_delayfile = dt - dateutil.relativedelta.relativedelta(seconds=5)  # don't include files younger than 5sec
         for file_name in os.listdir(self.root_path):
-            if self.re_file.match(file_name) is None:
+            file_match = self.re_file.match(file_name)
+            if file_match is None:
                 continue  # only inlude the matched names
             file_stat = os.stat(os.path.join(self.root_path, file_name))
             if not stat.S_ISREG(file_stat.st_mode):
@@ -96,11 +98,13 @@ class Service(object):
                 # this will fix the problem with the disk write delay (files may be still written)
 
             potential_files.append((
-                file_name,
+                file_match.group(1),  # filename: date "%Y%m%d"
+                file_match.group(2),  # filename: time and the rest
+                file_name,  # full filename
                 file_dt,
             ))
         # sort by dt, newest first
-        processing_files = sorted(potential_files, key=lambda potential_file: potential_file[1], reverse=True)[:10]
+        processing_files = sorted(potential_files, key=lambda potential_file: potential_file[3], reverse=True)[:10]
         if len(potential_files) > len(processing_files):
             more_files = True
         else:
@@ -110,9 +114,13 @@ class Service(object):
         del potential_files
 
         for processing_file in processing_files:
-            if self.upload_file(processing_file[0]):
+            if self.upload_file(
+                    processing_file[0],
+                    processing_file[1],
+                    open(os.path.join(self.root_path, processing_file[2]), 'rb')
+            ):
                 try:
-                    os.unlink(os.path.join(self.root_path, processing_file[0]))
+                    os.unlink(os.path.join(self.root_path, processing_file[2]))
                 except OSError:
                     pass
             else:
@@ -120,14 +128,15 @@ class Service(object):
 
         return more_files
 
-    def upload_file(self, file_name):
+    def upload_file(self, directory: str, name: str, contents: io.FileIO[bytes]) -> bool:
         if self.shutdown_event.is_set():
             raise InterruptedError('Service is shutting down')
 
         http_conn = http_client.HTTPSConnection('graph.microsoft.com')
         http_conn.request(
-            'PUT', '/v1.0/me/drive/root:/motion_uploader/%s/%s:/content' % (self.camera_id, file_name),
-            open(os.path.join(self.root_path, file_name), 'rb').read(),
+            'PUT',
+            '/v1.0/me/drive/root:%s:/content' % os.path.join('/motion_uploader', self.camera_id, directory, name),
+            contents.read(),
             {
                 'Authorization': '%s %s' % (self.access_token_type, self.access_token),
                 'Content-Type': 'image/jpeg',
