@@ -14,7 +14,6 @@ import urllib.parse as url_parser
 import json
 import re
 import time
-import io
 from .config import Config
 from .logging_defaults import *
 
@@ -128,7 +127,7 @@ class Service(object):
 
         return more_files
 
-    def upload_file(self, directory: str, name: str, contents: io.FileIO[bytes]) -> bool:
+    def upload_file(self, directory: str, name: str, contents: typing.BinaryIO) -> bool:
         if self.shutdown_event.is_set():
             raise InterruptedError('Service is shutting down')
 
