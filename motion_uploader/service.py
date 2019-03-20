@@ -18,14 +18,16 @@ from .config import Config
 from .logging_defaults import *
 
 
+class SignalReceived(Exception):
+    pass
+
+
 class FetchAccessTokenError(Exception):
     pass
 
 
 class Service(object):
     def __init__(self):
-        self.shutdown_event = Event()
-
         self.root_path = os.getcwd()
         self.cf = Config()
         self.camera_id = self.cf.get_camera_id()
@@ -33,9 +35,6 @@ class Service(object):
         self.access_token_type = None
         self.access_token = None
         self.access_token_expires = None
-
-    def shutdown(self):
-        self.shutdown_event.set()
 
     def fetch_access_token(self) -> bool:
         # Convert the refresh_token to the access_token
@@ -76,7 +75,7 @@ class Service(object):
                 return
         raise FetchAccessTokenError()
 
-    def process_files(self):
+    def process_files(self, limit: int=10) -> bool:
         if self.access_token is None or self.access_token_expires is None or \
                 self.access_token_expires <= datetime.datetime.utcnow():
             self.fetch_access_token_retry()
@@ -103,7 +102,7 @@ class Service(object):
                 file_dt,
             ))
         # sort by dt, newest first
-        processing_files = sorted(potential_files, key=lambda potential_file: potential_file[3], reverse=True)[:10]
+        processing_files = sorted(potential_files, key=lambda potential_file: potential_file[3], reverse=True)[:limit]
         if len(potential_files) > len(processing_files):
             more_files = True
         else:
@@ -128,9 +127,6 @@ class Service(object):
         return more_files
 
     def upload_file(self, directory: str, name: str, contents: typing.BinaryIO) -> bool:
-        if self.shutdown_event.is_set():
-            raise InterruptedError('Service is shutting down')
-
         http_conn = http_client.HTTPSConnection('graph.microsoft.com')
         http_conn.request(
             'PUT',
@@ -223,31 +219,30 @@ def main():
     logging.info('Running as a service')
 
     service = Service()
-    service.create_folders()
-
-    termination_event = Event()
 
     def signal_handler(signum, frame):
         logging.warning('Received signal %s. Exiting' % signum)
-        termination_event.set()
         service.shutdown()
+        raise SignalReceived(signum)
 
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGHUP, signal_handler)
+    signal.signal(signal.SIGALRM, signal_handler)
 
-    while True:
-        try:
-            if service.process_files():
-                continue
+    signal.alarm(30)
+    service.create_folders()
 
-            if termination_event.wait(5):
-                logging.info('Event triggered. Shutting down ...')
-                break
-            logging.error('Status: alive')
-        except (InterruptedError, KeyboardInterrupt):
-            logging.info('Interrupt received. Shutting down ...')
-            break
+    try:
+        processing_limit = 10
+        while True:
+            signal.alarm(processing_limit * 30 + 5)  # set the alarm so the process is terminated if hung
+            if not service.process_files(processing_limit):
+                time.sleep(5)
+                logging.info('Status: alive')
+    except SignalReceived:
+        logging.warning('Interrupt received. Shutting down ...')
+        break
 
 
 if __name__ == '__main__':
