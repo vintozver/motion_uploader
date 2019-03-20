@@ -222,7 +222,6 @@ def main():
 
     def signal_handler(signum, frame):
         logging.warning('Received signal %s. Exiting' % signum)
-        service.shutdown()
         raise SignalReceived(signum)
 
     signal.signal(signal.SIGTERM, signal_handler)
