@@ -242,7 +242,6 @@ def main():
                 logging.info('Status: alive')
     except SignalReceived:
         logging.warning('Interrupt received. Shutting down ...')
-        break
 
 
 if __name__ == '__main__':
